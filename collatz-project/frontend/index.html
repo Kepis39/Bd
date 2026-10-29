@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Гипотеза Коллатца — исследование задачи 3n+1</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+<header>
+  <h1>Гипотеза Коллатца</h1>
+  <p>Интерактивное исследование задачи 3n + 1 с визуализацией и хранением данных в PostgreSQL</p>
+</header>
+
+<div class="container">
+
+  <!-- THEORY -->
+  <div class="theory" id="theory-section">
+    <h2 onclick="toggleTheory()">Теоретическое обоснование</h2>
+    <div class="theory-body">
+      <p><strong>Гипотеза Коллатца</strong> (также известна как проблема 3n+1, гипотеза Улама, проблема Сиракуз) — одна из нерешённых проблем математики, сформулированная Лотаром Коллатцем в 1937 году.</p>
+      <div class="formula">
+        f(n) = n / 2, если n чётное &nbsp;&nbsp;|&nbsp;&nbsp; f(n) = 3n + 1, если n нечётное
+      </div>
+      <p><strong>Формулировка:</strong> Возьмите любое натуральное число n. Если оно чётное — разделите на 2. Если нечётное — умножьте на 3 и прибавьте 1. Повторяйте процесс. Гипотеза утверждает, что для любого начального n последовательность рано или поздно достигнет числа 1.</p>
+
+      <p><strong>Почему невозможно выйти из цикла 4 &rarr; 2 &rarr; 1:</strong></p>
+      <ul>
+        <li><strong>Единственный цикл.</strong> Когда последовательность достигает 1, следующие значения: 1 &rarr; 4 &rarr; 2 &rarr; 1. Это замкнутый цикл длины 3. Математически доказано, что для положительных целых чисел это единственный возможный цикл малой длины.</li>
+        <li><strong>Структура чётных чисел.</strong> Операция n/2 всегда уменьшает число. Каждое чётное число «стремится» вниз. Операция 3n+1 для нечётного числа всегда даёт чётное число (нечётное &times; 3 = нечётное, нечётное + 1 = чётное), что гарантирует последующее деление.</li>
+        <li><strong>Статистическое обоснование.</strong> При операции 3n+1 число растёт приблизительно в 3 раза, но становится чётным. Далее происходит деление на 2 один или несколько раз. В среднем число делится на 2 примерно 1,5 раза за цикл, а средний множитель роста составляет 3 / 2<sup>1,5</sup> &approx; 0,87 &lt; 1, то есть последовательность статистически убывает.</li>
+        <li><strong>Невозможность альтернативного цикла.</strong> Для существования другого цикла потребовалось бы, чтобы k применений правила 3n+1 и m применений n/2 вернули исходное число: n &times; 3<sup>k</sup> / 2<sup>m</sup> = n, то есть 3<sup>k</sup> = 2<sup>m</sup>. Но степени 2 и степени 3 никогда не равны (кроме тривиального случая 3<sup>0</sup> = 2<sup>0</sup> = 1), что исключает альтернативные циклы среди малых чисел.</li>
+        <li><strong>Эмпирическая проверка.</strong> Гипотеза проверена для всех чисел до 2<sup>68</sup> (приблизительно 2,95 &times; 10<sup>20</sup>). Все последовательности достигают 1.</li>
+      </ul>
+      <p><strong>Почему это не доказано?</strong> Несмотря на статистические аргументы, строгого доказательства не существует. Последовательность может расти непредсказуемо перед тем, как начать убывать — например, число 27 достигает максимума 9232 прежде чем опуститься до 1. Пол Эрдёш сказал: <em>«Математика ещё не готова к таким проблемам»</em>.</p>
+    </div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="controls">
+    <div class="control-group">
+      <label for="input-number">Начальное число</label>
+      <input type="number" id="input-number" min="1" value="27" placeholder="Введите число">
+    </div>
+    <div class="control-group">
+      <label for="mode-select">Режим вычисления</label>
+      <select id="mode-select">
+        <option value="until_one">До достижения 1</option>
+        <option value="infinite">Бесконечный цикл</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label for="max-steps">Лимит шагов</label>
+      <input type="number" id="max-steps" min="100" value="1000" placeholder="Макс. шагов">
+    </div>
+    <button class="btn btn-start" id="btn-start" onclick="startComputation()">Запуск</button>
+    <button class="btn btn-stop" id="btn-stop" onclick="stopComputation()" disabled>Стоп</button>
+    <button class="btn btn-secondary" onclick="loadHistory()">История</button>
+    <button class="btn btn-secondary" onclick="loadFrequency()">Частоты</button>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="status-bar" id="status-bar">
+    <div class="stat"><div class="stat-value" id="st-number">&mdash;</div><div class="stat-label">Начальное число</div></div>
+    <div class="stat"><div class="stat-value" id="st-current">&mdash;</div><div class="stat-label">Текущее значение</div></div>
+    <div class="stat"><div class="stat-value" id="st-steps">0</div><div class="stat-label">Количество шагов</div></div>
+    <div class="stat"><div class="stat-value" id="st-max">&mdash;</div><div class="stat-label">Максимум</div></div>
+    <div class="stat"><div class="stat-value" id="st-status">Ожидание</div><div class="stat-label">Статус</div></div>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="grid">
+    <div class="panel">
+      <h3>Последовательность</h3>
+      <div id="sequence-list"><div class="loading">Введите число и нажмите «Запуск»</div></div>
+    </div>
+    <div class="panel">
+      <h3>График значений</h3>
+      <div id="chart-container"><canvas id="chart-canvas"></canvas></div>
+    </div>
+    <div class="panel full-width">
+      <h3>Дерево Коллатца</h3>
+      <div id="tree-container"></div>
+    </div>
+    <div class="panel">
+      <h3>Повторяющиеся числа</h3>
+      <table id="freq-table">
+        <thead><tr><th>Число</th><th>Встречалось</th><th>Чётность</th></tr></thead>
+        <tbody id="freq-body"><tr><td colspan="3" class="loading">Нажмите «Частоты»</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>История запусков</h3>
+      <div id="history-list"><div class="loading">Нажмите «История»</div></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Гипотеза Коллатца &mdash; PostgreSQL, Flask, Docker &bull; 2026
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
