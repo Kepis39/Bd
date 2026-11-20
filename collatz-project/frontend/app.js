@@ -218,7 +218,9 @@ function buildTree(seq) {
 
   if (!seq || seq.length === 0) return;
 
-  // 1. Собираем все шаги вычисленной последовательности
+  var startNum = seq.at(0).value;
+
+  // 1. Собираем шаги основной последовательности
   var stepMap = new Map();
   seq.forEach(function(s) {
     if (!stepMap.has(s.value)) {
@@ -227,101 +229,100 @@ function buildTree(seq) {
     stepMap.get(s.value).push({ step: s.step, op: s.operation });
   });
 
-  // 2. Формируем непрерывную цепочку от стартового числа до корня 1
-  var fullChain = seq.map(function(s) { return s.value; });
-  var lastVal = fullChain.at(-1);
+  // 2. Прямая цепочка Коллатца сверху вниз: от стартового числа до 1 (без цикла 4-2-1)
+  var mainChain = Array.of();
+  for (var i = 0; i < seq.length; i++) {
+    var val = seq.at(i).value;
+    mainChain.push(val);
+    if (val === 1) break;
+  }
+
+  var tail = mainChain.at(-1);
   var guard = 0;
-  while (lastVal > 1 && guard < 10000) {
-    lastVal = (lastVal % 2 === 0) ? (lastVal / 2) : (lastVal * 3 + 1);
-    fullChain.push(lastVal);
-    if (!stepMap.has(lastVal)) {
-      stepMap.set(lastVal, Array.of({ step: '…', op: 'к 1' }));
+  while (tail > 1 && guard < 10000) {
+    tail = (tail % 2 === 0) ? (tail / 2) : (tail * 3 + 1);
+    mainChain.push(tail);
+    if (!stepMap.has(tail)) {
+      stepMap.set(tail, Array.of({ step: '…', op: 'к 1' }));
     }
+    if (tail === 1) break;
     guard++;
   }
 
-  // 3. Строим гарантированный основной ствол от корня 1 ко всем шагам
-  var nodeMap = new Map();
+  // 3. Строим ствол дерева СВЕРХУ ВНИЗ (корень наверху — исходное число, финал внизу — 1)
+  var usedValues = new Set(mainChain);
+  var totalNodes = 0;
+  var maxNodesLimit = 220;
 
-  function getOrCreateMainNode(val) {
-    if (!nodeMap.has(val)) {
-      nodeMap.set(val, {
-        value: val,
-        inSequence: stepMap.has(val),
-        steps: stepMap.get(val) || Array.of(),
-        children: Array.of()
-      });
-    }
-    return nodeMap.get(val);
+  function createNode(val, inSeq, ruleLabel) {
+    totalNodes++;
+    return {
+      value: val,
+      inSequence: Boolean(inSeq),
+      ruleLabel: ruleLabel || '',
+      steps: stepMap.get(val) || Array.of(),
+      children: Array.of()
+    };
   }
 
-  var root = getOrCreateMainNode(1);
+  var root = createNode(mainChain.at(0), true, 'старт');
+  var trunkNodes = Array.of(root);
+  var currentParent = root;
 
-  function containsNode(subRoot, val) {
-    if (subRoot.value === val) return true;
-    return subRoot.children.some(function(c) { return containsNode(c, val); });
+  for (var k = 1; k < mainChain.length; k++) {
+    var prevVal = mainChain.at(k - 1);
+    var nextVal = mainChain.at(k);
+    if (nextVal === prevVal) continue;
+
+    var rule = (prevVal % 2 === 0) ? 'n/2' : '3n+1';
+    var nextNode = createNode(nextVal, true, rule);
+    currentParent.children.push(nextNode);
+    trunkNodes.push(nextNode);
+    currentParent = nextNode;
   }
 
-  function hasAncestor(targetNode, checkVal, currentRoot) {
-    if (currentRoot.value === checkVal) {
-      return containsNode(currentRoot, targetNode.value);
-    }
-    for (var k = 0; k < currentRoot.children.length; k++) {
-      if (hasAncestor(targetNode, checkVal, currentRoot.children.at(k))) return true;
-    }
-    return false;
-  }
+  // 4. Ветвление строго по теореме Коллатца:
+  // В четные узлы могут сходиться траектории от 2n и (при n ≡ 4 mod 6) от нечетного (n - 1) / 3
+  var maxSideDepth = mainChain.length > 50 ? 2 : 3;
 
-  // Связываем все узлы от 1 до начального числа без потерь и циклов
-  for (var i = fullChain.length - 1; i > 0; i--) {
-    var currVal = fullChain.at(i);
-    var prevVal = fullChain.at(i - 1);
-    if (currVal === prevVal) continue;
-    if (currVal === 4 && prevVal === 1) continue;
+  function expandCollatzBranches(node, depth) {
+    if (depth >= maxSideDepth || totalNodes >= maxNodesLimit) return;
+    if (node.value <= 1) return;
 
-    var parentNode = getOrCreateMainNode(currVal);
-    var childNode = getOrCreateMainNode(prevVal);
+    var n = node.value;
+    var branches = Array.of();
 
-    var alreadyLinked = parentNode.children.some(function(ch) { return ch.value === prevVal; });
-    if (!alreadyLinked && !hasAncestor(parentNode, prevVal, root)) {
-      parentNode.children.push(childNode);
-    }
-  }
-
-  // 4. Добавляем боковые ветки для контекста дерева
-  var maxSideDepth = seq.length > 60 ? 1 : 2;
-
-  function addSideBranches(node, sideDepth) {
-    if (sideDepth >= maxSideDepth) return;
-
-    var c1 = node.value * 2;
-    if (!nodeMap.has(c1)) {
-      var side1 = { value: c1, inSequence: false, steps: Array.of(), children: Array.of() };
-      nodeMap.set(c1, side1);
-      node.children.push(side1);
-      addSideBranches(side1, sideDepth + 1);
-    }
-
-    if (node.value > 1 && (node.value - 1) % 3 === 0) {
-      var c2 = (node.value - 1) / 3;
-      if (c2 > 0 && c2 % 2 === 1 && !nodeMap.has(c2)) {
-        var side2 = { value: c2, inSequence: false, steps: Array.of(), children: Array.of() };
-        nodeMap.set(c2, side2);
-        node.children.push(side2);
-        addSideBranches(side2, sideDepth + 1);
+    // Обратный нечетный шаг Коллатца: (n - 1) / 3, если результат целый, нечетный и > 1
+    if (n > 4 && (n - 1) % 3 === 0) {
+      var oddPred = (n - 1) / 3;
+      if (oddPred > 1 && oddPred % 2 === 1 && !usedValues.has(oddPred)) {
+        branches.push({ val: oddPred, label: '(n-1)/3' });
       }
     }
+
+    // Обратный четный шаг Коллатца: 2n
+    var evenPred = n * 2;
+    if (!usedValues.has(evenPred)) {
+      branches.push({ val: evenPred, label: '2n' });
+    }
+
+    branches.forEach(function(b) {
+      if (totalNodes >= maxNodesLimit || usedValues.has(b.val)) return;
+      usedValues.add(b.val);
+      var sideNode = createNode(b.val, false, b.label);
+      node.children.push(sideNode);
+      expandCollatzBranches(sideNode, depth + 1);
+    });
   }
 
-  var mainNodesList = Array.from(nodeMap.values());
-  mainNodesList.forEach(function(mNode) {
-    addSideBranches(mNode, 0);
+  trunkNodes.forEach(function(tNode) {
+    expandCollatzBranches(tNode, 0);
   });
 
-  // 5. Раскладка с фиксированным интервалом между узлами
+  // 5. Иерархия и раскладка D3 сверху вниз
   var hierarchy = d3.hierarchy(root);
-  var dx = 48;
-  var dy = 115;
+  var dx = 92; // Расстояние между прямоугольными боксами по ширине
+  var dy = 74; // Расстояние между уровнями по высоте
   var treeLayout = d3.tree().nodeSize(Array.of(dx, dy));
   treeLayout(hierarchy);
 
@@ -334,21 +335,45 @@ function buildTree(seq) {
   });
 
   var viewWidth = container.clientWidth || 960;
-  var svgHeight = 620;
+  var svgHeight = 640;
 
   var hint = document.createElement('div');
-  hint.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;';
-  hint.innerHTML = '<span>Колёсико мыши — масштаб, ЛКМ — перемещение (всего шагов: ' + seq.length + ')</span>' +
-                   '<button type="button" id="btn-fit-tree" style="padding:3px 10px;font-size:12px;cursor:pointer;border:1px solid #cbd5e1;border-radius:4px;background:#f8fafc;">Показать всё дерево</button>';
+  hint.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;';
+  hint.innerHTML =
+    '<span>Сверху вниз по Коллатцу: <b>' + startNum + ' → 1</b> (синие: <b>n/2</b>, красные: <b>3n+1</b>, боковые ветви: <b>2n</b> и <b>(n−1)/3</b>)</span>' +
+    '<button type="button" id="btn-fit-tree" style="padding:3px 10px;font-size:12px;cursor:pointer;border:1px solid #cbd5e1;border-radius:4px;background:#f8fafc;">Показать всё дерево</button>';
   container.appendChild(hint);
 
   var svg = d3.select(container)
     .append('svg')
     .attr('width', '100%')
     .attr('height', svgHeight)
-    .style('background', '#f8fafc')
+    .style('background', '#ffffff')
+    .style('border', '1px solid #e2e8f0')
     .style('border-radius', '8px')
     .style('cursor', 'grab');
+
+  // Цветные стрелки на концах линий
+  var defs = svg.append('defs');
+  var arrowDefs = Array.of(
+    { id: 'box-arr-even', color: '#2563eb' },
+    { id: 'box-arr-odd',  color: '#ef4444' },
+    { id: 'box-arr-side', color: '#94a3b8' }
+  );
+
+  arrowDefs.forEach(function(m) {
+    defs.append('marker')
+      .attr('id', m.id)
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 8)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', m.color);
+  });
 
   var g = svg.append('g');
 
@@ -360,8 +385,12 @@ function buildTree(seq) {
 
   svg.call(zoom);
 
-  var startNum = seq.at(0).value;
+  var boxH = 28;
+  function getBoxW(val) {
+    return Math.max(48, String(val).length * 9 + 20);
+  }
 
+  // 6. Отрисовка связей от нижней грани верхнего бокса к верхней грани нижнего бокса
   g.selectAll('.tree-link')
     .data(hierarchy.links())
     .enter()
@@ -369,78 +398,98 @@ function buildTree(seq) {
     .attr('class', 'tree-link')
     .attr('fill', 'none')
     .attr('stroke', function(d) {
-      return (d.source.data.inSequence && d.target.data.inSequence) ? '#2563eb' : '#cbd5e1';
+      var isMain = d.source.data.inSequence && d.target.data.inSequence;
+      if (!isMain) return '#94a3b8';
+      return (d.source.data.value % 2 === 0) ? '#2563eb' : '#ef4444';
+    })
+    .attr('stroke-dasharray', function(d) {
+      var isMain = d.source.data.inSequence && d.target.data.inSequence;
+      return isMain ? 'none' : '4,3';
     })
     .attr('stroke-width', function(d) {
-      return (d.source.data.inSequence && d.target.data.inSequence) ? 3 : 1.2;
+      return (d.source.data.inSequence && d.target.data.inSequence) ? 2.2 : 1.4;
     })
-    .attr('d', d3.linkHorizontal()
-      .x(function(d) { return d.y; })
-      .y(function(d) { return d.x; })
-    );
+    .attr('marker-end', function(d) {
+      var isMain = d.source.data.inSequence && d.target.data.inSequence;
+      if (!isMain) return 'url(#box-arr-side)';
+      return (d.source.data.value % 2 === 0) ? 'url(#box-arr-even)' : 'url(#box-arr-odd)';
+    })
+    .attr('d', function(d) {
+      var sx = d.source.x;
+      var sy = d.source.y + (boxH / 2);
+      var tx = d.target.x;
+      var ty = d.target.y - (boxH / 2) - 2;
+      var midY = (sy + ty) / 2;
+      return 'M' + sx + ',' + sy + ' C' + sx + ',' + midY + ' ' + tx + ',' + midY + ' ' + tx + ',' + ty;
+    });
 
+  // 7. Отрисовка прямоугольных цветных боксов
   var nodes = g.selectAll('.tree-node')
     .data(hierarchy.descendants())
     .enter()
     .append('g')
     .attr('class', 'tree-node')
     .attr('transform', function(d) {
-      return 'translate(' + d.y + ',' + d.x + ')';
+      return 'translate(' + d.x + ',' + d.y + ')';
     });
 
-  nodes.append('circle')
-    .attr('r', function(d) { return d.data.inSequence ? 7.5 : 4; })
+  nodes.append('rect')
+    .attr('x', function(d) { return -getBoxW(d.data.value) / 2; })
+    .attr('y', -boxH / 2)
+    .attr('width', function(d) { return getBoxW(d.data.value); })
+    .attr('height', boxH)
+    .attr('rx', 6)
+    .attr('ry', 6)
     .attr('fill', function(d) {
-      if (d.data.value === startNum) return '#dc2626';
-      if (d.data.value === 1) return '#16a34a';
-      return d.data.inSequence ? '#2563eb' : '#94a3b8';
+      if (d.depth === 0) return '#f59e0b';                          // Старт наверху — оранжевый
+      if (d.data.value === 1 && d.data.inSequence) return '#16a34a'; // Финиш 1 внизу — зеленый
+      if (d.data.inSequence) {
+        return (d.data.value % 2 === 0) ? '#2563eb' : '#ef4444';    // Четные — синие, нечетные — красные
+      }
+      return (d.data.value % 2 === 0) ? '#eff6ff' : '#fef2f2';      // Боковые ветви — светлые пастельные
     })
-    .attr('stroke', '#ffffff')
-    .attr('stroke-width', 1.5);
+    .attr('stroke', function(d) {
+      if (d.depth === 0) return '#b45309';
+      if (d.data.value === 1 && d.data.inSequence) return '#15803d';
+      if (d.data.inSequence) {
+        return (d.data.value % 2 === 0) ? '#1d4ed8' : '#b91c1c';
+      }
+      return (d.data.value % 2 === 0) ? '#93c5fd' : '#fca5a5';
+    })
+    .attr('stroke-width', function(d) { return d.data.inSequence ? 2 : 1.3; });
 
   nodes.append('text')
-    .attr('dy', function(d) { return d.data.inSequence ? '-0.8em' : '0.32em'; })
-    .attr('x', function(d) { return d.data.inSequence ? 0 : (d.children ? -8 : 8); })
-    .attr('text-anchor', function(d) {
-      if (d.data.inSequence) return 'middle';
-      return d.children ? 'end' : 'start';
+    .attr('dy', '0.35em')
+    .attr('text-anchor', 'middle')
+    .style('font-family', 'Segoe UI, system-ui, sans-serif')
+    .style('font-size', '12px')
+    .style('font-weight', function(d) { return d.data.inSequence ? '700' : '600'; })
+    .style('fill', function(d) {
+      return d.data.inSequence ? '#ffffff' : '#334155';
     })
-    .style('font-size', function(d) { return d.data.inSequence ? '13px' : '10px'; })
-    .style('font-weight', function(d) { return d.data.inSequence ? '700' : '400'; })
-    .style('fill', function(d) { return d.data.inSequence ? '#0f172a' : '#94a3b8'; })
     .text(function(d) { return d.data.value; });
 
-  nodes.filter(function(d) { return d.data.inSequence; })
-    .append('text')
-    .attr('dy', '1.6em')
-    .attr('x', 0)
-    .attr('text-anchor', 'middle')
-    .style('font-size', '10px')
-    .style('font-weight', '600')
-    .style('fill', '#2563eb')
+  nodes.append('title')
     .text(function(d) {
-      var labels = d.data.steps.map(function(st) {
-        if (st.step === '…') return '…';
-        return '#' + st.step + (st.op === 'start' ? ' (старт)' : ' (' + st.op + ')');
-      });
-      if (labels.length > 3) {
-        return labels.at(0) + ', ' + labels.at(1) + ' … ' + labels.at(-1);
+      if (!d.data.inSequence) {
+        return 'Ветвь Коллатца (' + d.data.ruleLabel + '): ' + d.data.value;
       }
-      return labels.join(', ');
+      var stepsStr = d.data.steps.map(function(st) {
+        return st.step === '…' ? '…' : '#' + st.step + ' (' + st.op + ')';
+      }).join(', ');
+      return 'Число: ' + d.data.value + '\nШаги: ' + stepsStr;
     });
 
-  // 6. Автоматическое масштабирование всего дерева целиком под ширину и высоту окна
+  // 8. Автоматическое вписывание всего дерева в экран
   function fitFullTree() {
     var currentViewW = container.clientWidth || viewWidth;
-    var treeW = (maxY - minY) + 160;
-    var treeH = (maxX - minX) + 120;
-    var scaleX = currentViewW / treeW;
-    var scaleY = svgHeight / treeH;
-    var scale = Math.min(scaleX, scaleY, 1.1);
+    var treeW = Math.max(140, (maxX - minX) + 180);
+    var treeH = Math.max(140, (maxY - minY) + 150);
+    var scale = Math.min(currentViewW / treeW, svgHeight / treeH, 1.1);
     scale = Math.max(scale, 0.04);
 
-    var centerX = (minY + maxY) / 2;
-    var centerY = (minX + maxX) / 2;
+    var centerX = (minX + maxX) / 2;
+    var centerY = (minY + maxY) / 2;
 
     var translateX = (currentViewW / 2) - (centerX * scale);
     var translateY = (svgHeight / 2) - (centerY * scale);
@@ -455,6 +504,7 @@ function buildTree(seq) {
   var fitBtn = document.getElementById('btn-fit-tree');
   if (fitBtn) fitBtn.onclick = fitFullTree;
 }
+
 
 // ---- Frequency (кнопка «Частоты» -> #freq-body) ----
 async function loadFrequency() {
